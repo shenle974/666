@@ -12,7 +12,7 @@
   {
     "title": "Speech/Text Consistency QC API",
     "name": "SpeechTextConsistencyQC",
-    "description": "Transcribe video speech through an API, translate it to Chinese, and compare it with line-based reference text."
+    "description": "Accept a connected VIDEO input, transcribe speech through an API, translate it to Chinese, and compare it with line-based reference text."
   },
   {
     "title": "QC Text Viewer/Saver",

@@ -69,6 +69,118 @@ def _output_dir():
     return Path.cwd()
 
 
+def looks_like_video_path(value):
+    if not value:
+        return False
+    try:
+        suffix = Path(str(value)).suffix.lower()
+    except Exception:
+        return False
+    return suffix in VIDEO_EXTENSIONS
+
+
+def resolve_video_object_path(value, depth=0, seen=None):
+    if value is None or depth > 5:
+        return None
+    if seen is None:
+        seen = set()
+
+    value_id = id(value)
+    if value_id in seen:
+        return None
+    seen.add(value_id)
+
+    if isinstance(value, (str, os.PathLike)):
+        text = str(value)
+        if looks_like_video_path(text):
+            return resolve_path(text)
+        return None
+
+    if isinstance(value, dict):
+        preferred_keys = (
+            "path",
+            "video_path",
+            "file_path",
+            "filepath",
+            "filename",
+            "file",
+            "name",
+        )
+        for key in preferred_keys:
+            if key in value:
+                found = resolve_video_object_path(value.get(key), depth + 1, seen)
+                if found is not None:
+                    return found
+        for item in value.values():
+            found = resolve_video_object_path(item, depth + 1, seen)
+            if found is not None:
+                return found
+        return None
+
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            found = resolve_video_object_path(item, depth + 1, seen)
+            if found is not None:
+                return found
+        return None
+
+    for attr in (
+        "path",
+        "video_path",
+        "file_path",
+        "filepath",
+        "filename",
+        "file",
+        "name",
+    ):
+        try:
+            attr_value = getattr(value, attr)
+        except Exception:
+            continue
+        found = resolve_video_object_path(attr_value, depth + 1, seen)
+        if found is not None:
+            return found
+
+    for method_name in ("get_path", "get_file_path", "get_filename"):
+        try:
+            method = getattr(value, method_name)
+        except Exception:
+            continue
+        if callable(method):
+            try:
+                found = resolve_video_object_path(method(), depth + 1, seen)
+            except Exception:
+                continue
+            if found is not None:
+                return found
+
+    try:
+        value_dict = vars(value)
+    except Exception:
+        value_dict = None
+    if value_dict:
+        found = resolve_video_object_path(value_dict, depth + 1, seen)
+        if found is not None:
+            return found
+
+    return None
+
+
+def resolve_video_input(video, video_path):
+    from_video = resolve_video_object_path(video)
+    if from_video is not None:
+        return from_video
+
+    from_path = resolve_path(video_path) if (video_path or "").strip() else None
+    if from_path is not None:
+        return from_path
+
+    raise ValueError(
+        "请把“加载视频”的视频输出接到本节点的 video 输入；"
+        "如果不用接线，也可以在可选 video_path 里填写视频文件名或路径。"
+    )
+
+
 def resolve_path(value):
     raw = (value or "").strip().strip("\"'")
     if not raw:
@@ -579,14 +691,7 @@ class SpeechTextConsistencyQC:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "video_path": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": False,
-                        "placeholder": "视频绝对路径，或 ComfyUI/input 里的文件名，例如 demo.mp4",
-                    },
-                ),
+                "video": ("VIDEO",),
                 "reference_text": (
                     "STRING",
                     {
@@ -631,6 +736,14 @@ class SpeechTextConsistencyQC:
                 ),
             },
             "optional": {
+                "video_path": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                        "placeholder": "备用：视频文件名或路径；通常直接连接 video 即可",
+                    },
+                ),
                 "reference_text_file": (
                     "STRING",
                     {
@@ -656,7 +769,7 @@ class SpeechTextConsistencyQC:
 
     def run(
         self,
-        video_path,
+        video,
         reference_text,
         api_key,
         api_base_url,
@@ -665,11 +778,10 @@ class SpeechTextConsistencyQC:
         language,
         similarity_threshold,
         sentence_threshold,
+        video_path="",
         reference_text_file="",
     ):
-        video = resolve_path(video_path)
-        if video is None:
-            raise ValueError("video_path 不能为空。")
+        video_file = resolve_video_input(video, video_path)
 
         reference = load_reference_text(reference_text, reference_text_file)
         if not reference:
@@ -683,7 +795,7 @@ class SpeechTextConsistencyQC:
 
         with tempfile.TemporaryDirectory(prefix="speech_text_qc_") as tmp_dir:
             audio_path = Path(tmp_dir) / "audio.mp3"
-            extract_audio(video, audio_path)
+            extract_audio(video_file, audio_path)
             transcript, segments, detected_language = transcribe_audio_api(
                 client,
                 audio_path,
@@ -714,7 +826,7 @@ class SpeechTextConsistencyQC:
             "similarity_threshold": float(similarity_threshold),
             "sentence_threshold": float(sentence_threshold),
             "detected_language": detected_language,
-            "video_path": str(video),
+            "video_path": str(video_file),
             "speech_model": speech_model,
             "text_model": text_model,
             "reference_text": reference,
@@ -729,7 +841,7 @@ class SpeechTextConsistencyQC:
             sentence_threshold=sentence_threshold,
             similarity_threshold=similarity_threshold,
             detected_language=detected_language,
-            video=video,
+            video=video_file,
             reference=reference,
             transcript=transcript,
             transcript_zh=transcript_zh,

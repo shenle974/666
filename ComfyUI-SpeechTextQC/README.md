@@ -90,11 +90,11 @@ Find the nodes under:
 video/audio_qc
 ```
 
-Typical workflow:
+Typical workflow with a video loader node:
 
-1. Put your video in ComfyUI `input`, then select it with `Uploaded Video Path`.
+1. Add ComfyUI's video loader node, such as `Load Video`.
 2. Put your reference script in `reference_text`, connect it from an upstream text node, or load it with `Reference Text Loader`.
-3. Connect the video path and reference text to `Speech/Text Consistency QC API`.
+3. Connect the video loader's `video` output to `Speech/Text Consistency QC API`'s `video` input.
 4. Connect `qc_report` to `QC Text Viewer/Saver`.
 5. Run the workflow and read the report in `QC Text Viewer/Saver`, or open the saved txt file from ComfyUI `output`.
 
@@ -102,7 +102,8 @@ Reference text is compared line by line. Each non-empty line is treated as one e
 
 ## Main Inputs
 
-- `video_path`: absolute video path, or a file name/path under ComfyUI `input`.
+- `video`: connect the output from a video loader node. This is the recommended input.
+- `video_path`: optional fallback file name/path under ComfyUI `input`; normally you do not need to fill this.
 - `reference_text`: reference script text. Each non-empty line is one sentence.
 - `reference_text_file`: optional `txt`, `srt`, `ass`, or `vtt` path. If provided, it overrides `reference_text`.
 - `api_key`: optional API key. If empty, `OPENAI_API_KEY` is used.
