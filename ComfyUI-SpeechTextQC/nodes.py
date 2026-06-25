@@ -604,37 +604,28 @@ def group_start_end(group):
     return (min(starts) if starts else None, max(ends) if ends else None)
 
 
-def build_qc_rows(reference_lines, transcript_segments, translated_lines, sentence_threshold):
+def build_qc_rows(reference_lines, transcript_segments, translated_lines):
     groups = group_transcript_units(reference_lines, transcript_segments)
     rows = []
     for index, reference in enumerate(reference_lines):
         group = groups[index] if index < len(groups) else []
         original = merge_group_text(group)
         translated = translated_lines[index] if index < len(translated_lines) else ""
-        score = similarity_ratio(reference, translated)
         start, end = group_start_end(group)
-        issues = build_diff_summary(reference, translated, max_items=5)
         rows.append(
             {
                 "index": index + 1,
-                "passed": score >= float(sentence_threshold),
-                "similarity": round(float(score), 4),
                 "start": start,
                 "end": end,
                 "reference": reference,
                 "transcript_original": original,
                 "transcript_zh": translated,
-                "issues": issues or ["未发现明显差异。"],
             }
         )
     return rows
 
 
 def build_report(
-    passed,
-    overall_similarity,
-    sentence_threshold,
-    similarity_threshold,
     detected_language,
     video,
     reference,
@@ -643,14 +634,9 @@ def build_report(
     segments,
     rows,
 ):
-    failed_rows = [row for row in rows if not row["passed"]]
     report_lines = [
-        f"质检结果: {'通过' if passed else '未通过'}",
-        f"整体相似度: {overall_similarity:.4f}",
-        f"整体阈值: {float(similarity_threshold):.4f}",
-        f"单句阈值: {float(sentence_threshold):.4f}",
+        "视频语音与参考文案对照",
         f"识别语言: {detected_language}",
-        f"失败句数: {len(failed_rows)} / {len(rows)}",
         f"视频: {video}",
         "",
         "参考文本:",
@@ -675,12 +661,10 @@ def build_report(
         report_lines.extend(
             [
                 "",
-                f"{row['index']}. {'通过' if row['passed'] else '未通过'}"
-                f" | 相似度 {row['similarity']:.4f}{time_range}",
+                f"{row['index']}.{time_range}",
                 f"参考: {row['reference']}",
                 f"识别原文: {row['transcript_original'] or '(空)'}",
                 f"中文译文: {row['transcript_zh'] or '(空)'}",
-                "差异: " + "；".join(row["issues"]),
             ]
         )
     return "\n".join(report_lines)
@@ -726,14 +710,6 @@ class SpeechTextConsistencyQC:
                         "placeholder": "可选：zh / en / ja；留空自动识别",
                     },
                 ),
-                "similarity_threshold": (
-                    "FLOAT",
-                    {"default": 0.92, "min": 0.0, "max": 1.0, "step": 0.01},
-                ),
-                "sentence_threshold": (
-                    "FLOAT",
-                    {"default": 0.86, "min": 0.0, "max": 1.0, "step": 0.01},
-                ),
             },
             "optional": {
                 "video_path": (
@@ -776,8 +752,6 @@ class SpeechTextConsistencyQC:
         speech_model,
         text_model,
         language,
-        similarity_threshold,
-        sentence_threshold,
         video_path="",
         reference_text_file="",
     ):
@@ -812,19 +786,14 @@ class SpeechTextConsistencyQC:
             reference_lines,
             segments,
             translated_lines,
-            sentence_threshold=sentence_threshold,
         )
-        overall_similarity = similarity_ratio("\n".join(reference_lines), transcript_zh)
-        passed = (
-            overall_similarity >= float(similarity_threshold)
-            and all(row["passed"] for row in rows)
-        )
+        overall_similarity = 1.0
+        passed = True
 
         qc_payload = {
             "passed": passed,
             "overall_similarity": round(float(overall_similarity), 4),
-            "similarity_threshold": float(similarity_threshold),
-            "sentence_threshold": float(sentence_threshold),
+            "mode": "comparison_only",
             "detected_language": detected_language,
             "video_path": str(video_file),
             "speech_model": speech_model,
@@ -836,10 +805,6 @@ class SpeechTextConsistencyQC:
             "rows": rows,
         }
         qc_report = build_report(
-            passed=passed,
-            overall_similarity=float(overall_similarity),
-            sentence_threshold=sentence_threshold,
-            similarity_threshold=similarity_threshold,
             detected_language=detected_language,
             video=video_file,
             reference=reference,

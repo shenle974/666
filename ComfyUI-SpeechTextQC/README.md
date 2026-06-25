@@ -111,17 +111,15 @@ Reference text is compared line by line. Each non-empty line is treated as one e
 - `speech_model`: transcription model. `whisper-1` is the default because it supports segment timestamps.
 - `text_model`: text model used for Chinese translation.
 - `language`: optional source language hint, such as `zh`, `en`, or `ja`. Leave empty for automatic detection.
-- `similarity_threshold`: overall pass threshold.
-- `sentence_threshold`: per-line pass threshold.
 
 ## Outputs
 
-- `passed`: boolean QC result.
-- `overall_similarity`: overall similarity between the reference script and Chinese transcript.
+- `passed`: kept for compatibility; comparison-only mode returns `true`.
+- `overall_similarity`: kept for compatibility; comparison-only mode returns `1.0`.
 - `transcript_original`: source-language speech transcript.
 - `transcript_zh`: simplified Chinese translation.
 - `qc_report`: readable Markdown-style QC report.
-- `qc_json`: structured JSON with segments, line-by-line scores, timestamps, and issue summaries.
+- `qc_json`: structured JSON with segments, line-by-line reference/transcript pairs, and timestamps.
 
 If your ComfyUI does not have a text preview node, use `QC Text Viewer/Saver` from this plugin.
 
