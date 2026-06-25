@@ -10,9 +10,9 @@
     "description": "Load reference text from txt, srt, ass, or vtt files in the ComfyUI input directory."
   },
   {
-    "title": "Speech/Text Consistency QC API",
+    "title": "Speech/Text Consistency QC Local",
     "name": "SpeechTextConsistencyQC",
-    "description": "Accept a connected VIDEO input, transcribe speech through an API, translate it to Chinese, and compare it with line-based reference text."
+    "description": "Accept a connected VIDEO input, transcribe speech locally with faster-whisper, translate it to Chinese through a text API, and compare it with line-based reference text."
   },
   {
     "title": "QC Text Viewer/Saver",

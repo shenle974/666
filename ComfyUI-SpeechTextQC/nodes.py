@@ -35,10 +35,13 @@ TEXT_EXTENSIONS = {
     ".vtt",
 }
 
-SPEECH_MODEL_OPTIONS = [
-    "whisper-1",
-    "gpt-4o-mini-transcribe",
-    "gpt-4o-transcribe",
+LOCAL_MODEL_OPTIONS = [
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large-v3",
+    "large-v3-turbo",
 ]
 
 TEXT_MODEL_OPTIONS = [
@@ -48,7 +51,6 @@ TEXT_MODEL_OPTIONS = [
 ]
 
 DEFAULT_API_BASE_URL = "https://api.openai.com/v1"
-MAX_AUDIO_UPLOAD_BYTES = 24 * 1024 * 1024
 
 
 def _input_dir():
@@ -67,6 +69,14 @@ def _output_dir():
         except Exception:
             pass
     return Path.cwd()
+
+
+def _faster_whisper_model_dir():
+    if folder_paths is not None:
+        models_dir = getattr(folder_paths, "models_dir", None)
+        if models_dir:
+            return Path(models_dir) / "faster-whisper"
+    return Path.cwd() / "models" / "faster-whisper"
 
 
 def looks_like_video_path(value):
@@ -261,11 +271,6 @@ def extract_audio(video_path, audio_path):
     ]
     subprocess.run(cmd, check=True)
 
-    if audio_path.stat().st_size > MAX_AUDIO_UPLOAD_BYTES:
-        raise RuntimeError(
-            "抽取后的音频超过 24MB。请缩短视频，或先把视频分段后再进行质检。"
-        )
-
 
 def _strip_srt_or_vtt(text):
     lines = []
@@ -450,36 +455,79 @@ def split_text_to_units(text):
     return units or ([{"text": text.strip()}] if (text or "").strip() else [])
 
 
-def transcribe_audio_api(client, audio_path, speech_model, language):
-    model = (speech_model or "whisper-1").strip()
+def resolve_local_device(device):
+    selected = (device or "auto").strip().lower()
+    if selected != "auto":
+        return selected
+
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() > 0:
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
+def resolve_compute_type(compute_type, device):
+    selected = (compute_type or "auto").strip().lower()
+    if selected != "auto":
+        return selected
+    return "float16" if device == "cuda" else "int8"
+
+
+def transcribe_audio_local(audio_path, local_model_size, language, device, compute_type):
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as exc:
+        raise RuntimeError(
+            "缺少 faster-whisper。请在 ComfyUI 的 Python 环境里执行 "
+            "`python -m pip install -r custom_nodes/666/ComfyUI-SpeechTextQC/requirements.txt`。"
+        ) from exc
+
+    model_size = (local_model_size or "small").strip()
     lang = (language or "").strip() or None
-    supports_verbose_segments = model == "whisper-1"
+    actual_device = resolve_local_device(device)
+    actual_compute_type = resolve_compute_type(compute_type, actual_device)
+    model_dir = _faster_whisper_model_dir()
+    model_dir.mkdir(parents=True, exist_ok=True)
 
-    params = {
-        "model": model,
-        "response_format": "verbose_json" if supports_verbose_segments else "json",
-    }
-    if supports_verbose_segments:
-        params["timestamp_granularities"] = ["segment"]
-    if lang:
-        params["language"] = lang
+    try:
+        model = WhisperModel(
+            model_size,
+            device=actual_device,
+            compute_type=actual_compute_type,
+            download_root=str(model_dir),
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "本地 faster-whisper 模型加载失败。首次运行需要联网下载模型；"
+            f"也可以手动把模型放到 {model_dir}。原始错误: {exc}"
+        ) from exc
 
-    with audio_path.open("rb") as audio_file:
-        response = client.audio.transcriptions.create(file=audio_file, **params)
+    segments_iter, info = model.transcribe(
+        str(audio_path),
+        language=lang,
+        vad_filter=True,
+        beam_size=5,
+    )
 
-    data = object_to_dict(response)
-    transcript = (data.get("text") or getattr(response, "text", "") or "").strip()
-    raw_segments = data.get("segments") or []
     segments = []
-    for raw_segment in raw_segments:
-        segment = parse_segment(raw_segment)
-        if segment:
-            segments.append(segment)
+    for segment in segments_iter:
+        text = segment.text.strip()
+        if not text:
+            continue
+        segments.append(
+            {
+                "start": round(float(segment.start), 3),
+                "end": round(float(segment.end), 3),
+                "text": text,
+            }
+        )
 
-    if not segments and transcript:
-        segments = split_text_to_units(transcript)
-
-    detected_language = data.get("language") or lang or "auto"
+    transcript = "".join(item["text"] for item in segments)
+    detected_language = getattr(info, "language", None) or lang or "auto"
     return transcript, segments, detected_language
 
 
@@ -569,6 +617,20 @@ def translate_texts_to_chinese(client, text_model, texts):
     return translated
 
 
+def translate_texts_to_chinese_safe(api_key, api_base_url, text_model, texts):
+    key = (api_key or os.environ.get("OPENAI_API_KEY") or "").strip()
+    if not key:
+        message = "未翻译：缺少 API key。语音识别已在本地完成，请填写 api_key 或设置 OPENAI_API_KEY 后重试翻译。"
+        return [message if (text or "").strip() else "" for text in texts], message
+
+    try:
+        client = make_openai_client(api_key, api_base_url)
+        return translate_texts_to_chinese(client, text_model, texts), ""
+    except Exception as exc:
+        message = f"翻译失败：{exc}"
+        return [message if (text or "").strip() else "" for text in texts], message
+
+
 def group_transcript_units(reference_lines, transcript_units):
     if not reference_lines:
         return []
@@ -627,32 +689,45 @@ def build_qc_rows(reference_lines, transcript_segments, translated_lines):
 
 def build_report(
     detected_language,
+    local_model_size,
+    device,
+    compute_type,
     video,
     reference,
     transcript,
     transcript_zh,
     segments,
     rows,
+    translation_error="",
 ):
     report_lines = [
         "视频语音与参考文案对照",
         f"识别语言: {detected_language}",
+        f"本地识别模型: {local_model_size}",
+        f"运行设备: {device} / {compute_type}",
         f"视频: {video}",
-        "",
-        "参考文本:",
-        reference,
-        "",
-        "视频原语言转写:",
-        transcript or "(无转写内容)",
-        "",
-        "中文译文:",
-        transcript_zh or "(无译文)",
-        "",
-        "时间轴转写:",
-        format_segments(segments) or "(无转写内容)",
-        "",
-        "逐句对照:",
     ]
+    if translation_error:
+        report_lines.append(f"翻译提示: {translation_error}")
+
+    report_lines.extend(
+        [
+            "",
+            "参考文本:",
+            reference,
+            "",
+            "视频原语言转写:",
+            transcript or "(无转写内容)",
+            "",
+            "中文译文:",
+            transcript_zh or "(无译文)",
+            "",
+            "时间轴转写:",
+            format_segments(segments) or "(无转写内容)",
+            "",
+            "逐句对照:",
+        ]
+    )
 
     for row in rows:
         time_range = ""
@@ -689,7 +764,7 @@ class SpeechTextConsistencyQC:
                     {
                         "default": "",
                         "multiline": False,
-                        "placeholder": "可选；为空时读取 OPENAI_API_KEY",
+                        "placeholder": "可选；仅用于中文翻译，为空时读取 OPENAI_API_KEY",
                     },
                 ),
                 "api_base_url": (
@@ -697,17 +772,22 @@ class SpeechTextConsistencyQC:
                     {
                         "default": DEFAULT_API_BASE_URL,
                         "multiline": False,
-                        "placeholder": "OpenAI 或兼容服务 Base URL",
+                        "placeholder": "文本翻译 API Base URL",
                     },
                 ),
-                "speech_model": (SPEECH_MODEL_OPTIONS, {"default": "whisper-1"}),
+                "local_model_size": (LOCAL_MODEL_OPTIONS, {"default": "small"}),
+                "device": (["auto", "cpu", "cuda"], {"default": "auto"}),
+                "compute_type": (
+                    ["auto", "int8", "float16", "float32"],
+                    {"default": "auto"},
+                ),
                 "text_model": (TEXT_MODEL_OPTIONS, {"default": "gpt-4o-mini"}),
                 "language": (
                     "STRING",
                     {
                         "default": "",
                         "multiline": False,
-                        "placeholder": "可选：zh / en / ja；留空自动识别",
+                        "placeholder": "可选：th / en；留空自动识别",
                     },
                 ),
             },
@@ -749,7 +829,9 @@ class SpeechTextConsistencyQC:
         reference_text,
         api_key,
         api_base_url,
-        speech_model,
+        local_model_size,
+        device,
+        compute_type,
         text_model,
         language,
         video_path="",
@@ -765,21 +847,27 @@ class SpeechTextConsistencyQC:
         if not reference_lines:
             raise ValueError("参考文案需要至少包含一行有效文本。")
 
-        client = make_openai_client(api_key, api_base_url)
-
         with tempfile.TemporaryDirectory(prefix="speech_text_qc_") as tmp_dir:
             audio_path = Path(tmp_dir) / "audio.mp3"
             extract_audio(video_file, audio_path)
-            transcript, segments, detected_language = transcribe_audio_api(
-                client,
+            actual_device = resolve_local_device(device)
+            actual_compute_type = resolve_compute_type(compute_type, actual_device)
+            transcript, segments, detected_language = transcribe_audio_local(
                 audio_path,
-                speech_model=speech_model,
+                local_model_size=local_model_size,
                 language=language,
+                device=actual_device,
+                compute_type=actual_compute_type,
             )
 
         groups = group_transcript_units(reference_lines, segments)
         grouped_original_texts = [merge_group_text(group) for group in groups]
-        translated_lines = translate_texts_to_chinese(client, text_model, grouped_original_texts)
+        translated_lines, translation_error = translate_texts_to_chinese_safe(
+            api_key,
+            api_base_url,
+            text_model,
+            grouped_original_texts,
+        )
         transcript_zh = "\n".join(translated_lines).strip()
 
         rows = build_qc_rows(
@@ -796,8 +884,11 @@ class SpeechTextConsistencyQC:
             "mode": "comparison_only",
             "detected_language": detected_language,
             "video_path": str(video_file),
-            "speech_model": speech_model,
+            "local_model_size": local_model_size,
+            "device": actual_device,
+            "compute_type": actual_compute_type,
             "text_model": text_model,
+            "translation_error": translation_error,
             "reference_text": reference,
             "transcript_original": transcript,
             "transcript_zh": transcript_zh,
@@ -806,12 +897,16 @@ class SpeechTextConsistencyQC:
         }
         qc_report = build_report(
             detected_language=detected_language,
+            local_model_size=local_model_size,
+            device=actual_device,
+            compute_type=actual_compute_type,
             video=video_file,
             reference=reference,
             transcript=transcript,
             transcript_zh=transcript_zh,
             segments=segments,
             rows=rows,
+            translation_error=translation_error,
         )
 
         return (
@@ -926,6 +1021,6 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "UploadedVideoPath": "Uploaded Video Path",
     "ReferenceTextLoader": "Reference Text Loader",
-    "SpeechTextConsistencyQC": "Speech/Text Consistency QC API",
+    "SpeechTextConsistencyQC": "Speech/Text Consistency QC Local",
     "QCTextViewerSaver": "QC Text Viewer/Saver",
 }

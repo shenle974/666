@@ -26,8 +26,12 @@ def main():
         print(f"[ComfyUI-SpeechTextQC] ffmpeg detected: {ffmpeg_path}")
 
     print(
-        "[ComfyUI-SpeechTextQC] Set OPENAI_API_KEY or fill api_key in the node "
-        "before using API transcription."
+        "[ComfyUI-SpeechTextQC] Speech recognition uses local faster-whisper. "
+        "The selected model downloads on first use."
+    )
+    print(
+        "[ComfyUI-SpeechTextQC] OPENAI_API_KEY or node api_key is only needed "
+        "for Chinese translation."
     )
 
 
