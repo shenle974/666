@@ -1,0 +1,17 @@
+[
+  {
+    "title": "Uploaded Video Path",
+    "name": "UploadedVideoPath",
+    "description": "Select a video from the ComfyUI input directory and output its path."
+  },
+  {
+    "title": "Reference Text Loader",
+    "name": "ReferenceTextLoader",
+    "description": "Load reference text from txt, srt, ass, or vtt files in the ComfyUI input directory."
+  },
+  {
+    "title": "Speech/Text Consistency QC API",
+    "name": "SpeechTextConsistencyQC",
+    "description": "Transcribe video speech through an API, translate it to Chinese, and compare it with line-based reference text."
+  }
+]

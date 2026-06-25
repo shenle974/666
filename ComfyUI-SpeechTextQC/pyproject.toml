@@ -1,0 +1,18 @@
+[project]
+name = "comfyui-speech-text-qc"
+description = "ComfyUI custom nodes for API-based video speech transcription, Chinese translation, and line-by-line text QC."
+version = "0.1.0"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = [
+    "openai>=1.0.0",
+    "rapidfuzz>=3.6.0",
+]
+
+[project.urls]
+Repository = "https://github.com/shenle974/666"
+
+[tool.comfy]
+PublisherId = "speech-text-qc"
+DisplayName = "ComfyUI Speech Text QC"
+Icon = ""
