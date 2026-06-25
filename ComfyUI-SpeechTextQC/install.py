@@ -30,8 +30,8 @@ def main():
         "The selected model downloads on first use."
     )
     print(
-        "[ComfyUI-SpeechTextQC] OPENAI_API_KEY or node api_key is only needed "
-        "for Chinese translation."
+        "[ComfyUI-SpeechTextQC] Translation can use node api_key, "
+        "or provider env vars: OPENAI_API_KEY / DEEPSEEK_API_KEY / DASHSCOPE_API_KEY."
     )
 
 

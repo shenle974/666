@@ -44,14 +44,31 @@ LOCAL_MODEL_OPTIONS = [
     "large-v3-turbo",
 ]
 
-TEXT_MODEL_OPTIONS = [
-    "gpt-4o-mini",
-    "gpt-4.1-mini",
-    "gpt-4o",
+TRANSLATION_PROVIDER_OPTIONS = [
+    "qwen_dashscope",
+    "deepseek",
+    "openai",
+    "custom_openai_compatible",
+    "none",
 ]
 
-DEFAULT_API_BASE_URL = "https://api.openai.com/v1"
-
+TRANSLATION_PROVIDER_DEFAULTS = {
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+        "env_key": "OPENAI_API_KEY",
+    },
+    "deepseek": {
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash",
+        "env_key": "DEEPSEEK_API_KEY",
+    },
+    "qwen_dashscope": {
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen-plus",
+        "env_key": "DASHSCOPE_API_KEY",
+    },
+}
 
 def _input_dir():
     if folder_paths is not None:
@@ -396,11 +413,36 @@ def format_segments(segments):
     return "\n".join(line for line in lines if line)
 
 
-def make_openai_client(api_key, api_base_url):
-    key = (api_key or os.environ.get("OPENAI_API_KEY") or "").strip()
+def resolve_translation_settings(provider, api_key, api_base_url, text_model):
+    selected_provider = (provider or "qwen_dashscope").strip() or "qwen_dashscope"
+    if selected_provider == "none":
+        return selected_provider, "", "", ""
+
+    defaults = TRANSLATION_PROVIDER_DEFAULTS.get(selected_provider, {})
+    env_key = defaults.get("env_key", "OPENAI_API_KEY")
+    key = (api_key or os.environ.get(env_key) or os.environ.get("OPENAI_API_KEY") or "").strip()
+    base_url = (api_base_url or "").strip() or defaults.get("base_url", "")
+    model = (text_model or "").strip() or defaults.get("model", "")
+
+    if selected_provider == "custom_openai_compatible" and not base_url:
+        raise RuntimeError("custom_openai_compatible 需要填写 api_base_url。")
+    if not model:
+        raise RuntimeError("请填写 text_model，或选择带默认模型的 translation_provider。")
+
+    return selected_provider, key, base_url, model
+
+
+def make_openai_client(api_key, api_base_url, provider="openai", text_model=""):
+    _, key, base_url, _ = resolve_translation_settings(
+        provider,
+        api_key,
+        api_base_url,
+        text_model,
+    )
     if not key:
         raise RuntimeError(
-            "缺少 API key。请在节点 api_key 填写，或设置环境变量 OPENAI_API_KEY。"
+            "缺少翻译 API key。请在节点 api_key 填写，或设置对应环境变量："
+            "OPENAI_API_KEY / DEEPSEEK_API_KEY / DASHSCOPE_API_KEY。"
         )
 
     try:
@@ -412,7 +454,6 @@ def make_openai_client(api_key, api_base_url):
         ) from exc
 
     kwargs = {"api_key": key}
-    base_url = (api_base_url or "").strip()
     if base_url:
         kwargs["base_url"] = base_url
     return OpenAI(**kwargs)
@@ -578,32 +619,36 @@ def translate_texts_to_chinese(client, text_model, texts):
         "只返回 JSON 对象，格式为 {\"translations\":[{\"index\":0,\"text\":\"...\"}]}。\n\n"
         f"{json.dumps(payload, ensure_ascii=False)}"
     )
-    model = (text_model or "gpt-4o-mini").strip()
+    model = (text_model or "").strip()
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是翻译 API。只返回 JSON，不要返回 Markdown。"
+                "把输入文本逐条翻译为简体中文。"
+            ),
+        },
+        {"role": "user", "content": prompt},
+    ]
 
     try:
-        response = client.responses.create(model=model, input=prompt)
-        parsed = extract_json_object(response_text(response))
-    except Exception as responses_error:
+        response = client.chat.completions.create(
+            model=model,
+            response_format={"type": "json_object"},
+            messages=messages,
+        )
+        parsed = extract_json_object(response.choices[0].message.content)
+    except Exception as json_error:
         try:
             response = client.chat.completions.create(
                 model=model,
-                response_format={"type": "json_object"},
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "你是翻译 API。只返回 JSON，不要返回 Markdown。"
-                            "把输入文本逐条翻译为简体中文。"
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
+                messages=messages,
             )
             parsed = extract_json_object(response.choices[0].message.content)
         except Exception as chat_error:
             raise RuntimeError(
-                "翻译 API 调用失败。Responses API 错误: "
-                f"{responses_error}; Chat Completions 兼容调用错误: {chat_error}"
+                "翻译 API 调用失败。JSON 模式错误: "
+                f"{json_error}; 普通 Chat Completions 错误: {chat_error}"
             ) from chat_error
 
     translated = list(source_items)
@@ -617,15 +662,38 @@ def translate_texts_to_chinese(client, text_model, texts):
     return translated
 
 
-def translate_texts_to_chinese_safe(api_key, api_base_url, text_model, texts):
-    key = (api_key or os.environ.get("OPENAI_API_KEY") or "").strip()
+def translate_texts_to_chinese_safe(provider, api_key, api_base_url, text_model, texts):
+    selected_provider = (provider or "qwen_dashscope").strip() or "qwen_dashscope"
+    if selected_provider == "none":
+        return ["" for _ in texts], "未翻译：translation_provider 设置为 none。"
+
+    try:
+        resolved_provider, key, resolved_base_url, resolved_model = resolve_translation_settings(
+            selected_provider,
+            api_key,
+            api_base_url,
+            text_model,
+        )
+    except Exception as exc:
+        message = f"翻译配置错误：{exc}"
+        return [message if (text or "").strip() else "" for text in texts], message
     if not key:
-        message = "未翻译：缺少 API key。语音识别已在本地完成，请填写 api_key 或设置 OPENAI_API_KEY 后重试翻译。"
+        defaults = TRANSLATION_PROVIDER_DEFAULTS.get(resolved_provider, {})
+        env_key = defaults.get("env_key", "OPENAI_API_KEY")
+        message = (
+            "未翻译：缺少翻译 API key。语音识别已在本地完成，"
+            f"请填写 api_key 或设置 {env_key} 后重试翻译。"
+        )
         return [message if (text or "").strip() else "" for text in texts], message
 
     try:
-        client = make_openai_client(api_key, api_base_url)
-        return translate_texts_to_chinese(client, text_model, texts), ""
+        client = make_openai_client(
+            key,
+            resolved_base_url,
+            provider=resolved_provider,
+            text_model=resolved_model,
+        )
+        return translate_texts_to_chinese(client, resolved_model, texts), ""
     except Exception as exc:
         message = f"翻译失败：{exc}"
         return [message if (text or "").strip() else "" for text in texts], message
@@ -764,15 +832,19 @@ class SpeechTextConsistencyQC:
                     {
                         "default": "",
                         "multiline": False,
-                        "placeholder": "可选；仅用于中文翻译，为空时读取 OPENAI_API_KEY",
+                        "placeholder": "可选；仅用于中文翻译，可填 OpenAI/DeepSeek/百炼 Key",
                     },
+                ),
+                "translation_provider": (
+                    TRANSLATION_PROVIDER_OPTIONS,
+                    {"default": "qwen_dashscope"},
                 ),
                 "api_base_url": (
                     "STRING",
                     {
-                        "default": DEFAULT_API_BASE_URL,
+                        "default": "",
                         "multiline": False,
-                        "placeholder": "文本翻译 API Base URL",
+                        "placeholder": "可选；留空使用服务商默认，custom 时必填",
                     },
                 ),
                 "local_model_size": (LOCAL_MODEL_OPTIONS, {"default": "small"}),
@@ -781,7 +853,14 @@ class SpeechTextConsistencyQC:
                     ["auto", "int8", "float16", "float32"],
                     {"default": "auto"},
                 ),
-                "text_model": (TEXT_MODEL_OPTIONS, {"default": "gpt-4o-mini"}),
+                "text_model": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                        "placeholder": "可选；如 qwen-plus / deepseek-v4-flash / gpt-4o-mini",
+                    },
+                ),
                 "language": (
                     "STRING",
                     {
@@ -828,6 +907,7 @@ class SpeechTextConsistencyQC:
         video,
         reference_text,
         api_key,
+        translation_provider,
         api_base_url,
         local_model_size,
         device,
@@ -863,6 +943,7 @@ class SpeechTextConsistencyQC:
         groups = group_transcript_units(reference_lines, segments)
         grouped_original_texts = [merge_group_text(group) for group in groups]
         translated_lines, translation_error = translate_texts_to_chinese_safe(
+            translation_provider,
             api_key,
             api_base_url,
             text_model,
@@ -887,6 +968,8 @@ class SpeechTextConsistencyQC:
             "local_model_size": local_model_size,
             "device": actual_device,
             "compute_type": actual_compute_type,
+            "translation_provider": translation_provider,
+            "api_base_url": api_base_url,
             "text_model": text_model,
             "translation_error": translation_error,
             "reference_text": reference,

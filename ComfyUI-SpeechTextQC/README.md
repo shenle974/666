@@ -66,23 +66,37 @@ winget install --id Gyan.FFmpeg -e
 
 Then restart ComfyUI.
 
-## API Key
+## Translation API
 
 Speech recognition is local and does not need an API key. An API key is only used for Chinese translation.
 
-Recommended: set an environment variable before starting ComfyUI:
-
-```bash
-export OPENAI_API_KEY="sk-..."
-```
-
-You can also fill `api_key` directly in the node. Leaving `api_key` empty makes the node read `OPENAI_API_KEY`.
-
-For OpenAI-compatible text translation services, set `api_base_url` in the node. The default is:
+The node supports OpenAI-compatible text providers:
 
 ```text
-https://api.openai.com/v1
+qwen_dashscope
+deepseek
+openai
+custom_openai_compatible
+none
 ```
+
+Recommended presets:
+
+```text
+qwen_dashscope: base_url=https://dashscope.aliyuncs.com/compatible-mode/v1, model=qwen-plus
+deepseek: base_url=https://api.deepseek.com, model=deepseek-v4-flash
+openai: base_url=https://api.openai.com/v1, model=gpt-4o-mini
+```
+
+You can fill `api_key` directly in the node. If `api_key` is empty, the node reads provider-specific environment variables:
+
+```text
+qwen_dashscope -> DASHSCOPE_API_KEY
+deepseek -> DEEPSEEK_API_KEY
+openai -> OPENAI_API_KEY
+```
+
+For `custom_openai_compatible`, fill both `api_base_url` and `text_model` yourself.
 
 ## Usage
 
@@ -111,9 +125,10 @@ Reference text is compared line by line. Each non-empty line is treated as one e
 - `local_model_size`: local faster-whisper model. Start with `small` for Windows CPU; use `medium` or `large-v3` for better accuracy if the computer is strong enough.
 - `device`: `auto`, `cpu`, or `cuda`.
 - `compute_type`: `auto`, `int8`, `float16`, or `float32`. Use `auto` unless you know the machine.
-- `api_key`: optional API key for Chinese translation only. If empty, `OPENAI_API_KEY` is used.
-- `api_base_url`: text translation API base URL for OpenAI or an OpenAI-compatible provider.
-- `text_model`: text model used for Chinese translation.
+- `translation_provider`: Chinese translation provider. Choose `qwen_dashscope`, `deepseek`, `openai`, `custom_openai_compatible`, or `none`.
+- `api_key`: optional API key for Chinese translation only.
+- `api_base_url`: optional for preset providers; required for `custom_openai_compatible`.
+- `text_model`: optional for preset providers; required for `custom_openai_compatible`.
 - `language`: optional source language hint, such as `th` or `en`. Leave empty for automatic detection.
 
 ## Outputs
