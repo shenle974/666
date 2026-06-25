@@ -112,14 +112,26 @@ def list_input_text_files():
 
 
 def ensure_ffmpeg():
-    if shutil.which("ffmpeg") is None:
-        raise RuntimeError("未找到 ffmpeg。请先安装 ffmpeg，并确认命令行里可以执行 `ffmpeg`。")
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path:
+        return ffmpeg_path
+
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as exc:
+        raise RuntimeError(
+            "未找到 ffmpeg。请安装插件依赖 `imageio-ffmpeg`，或手动安装 ffmpeg 并加入 PATH。"
+            "在 ComfyUI 的 Python 环境里执行: "
+            "`python -m pip install -r custom_nodes/666/ComfyUI-SpeechTextQC/requirements.txt`。"
+        ) from exc
 
 
 def extract_audio(video_path, audio_path):
-    ensure_ffmpeg()
+    ffmpeg_exe = ensure_ffmpeg()
     cmd = [
-        "ffmpeg",
+        ffmpeg_exe,
         "-hide_banner",
         "-loglevel",
         "error",

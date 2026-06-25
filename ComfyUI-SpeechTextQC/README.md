@@ -37,7 +37,16 @@ ComfyUI Manager will clone the repository, install `requirements.txt`, and run `
 
 ## Requirements
 
-You need `ffmpeg` available on the command line:
+The plugin first looks for system `ffmpeg`. If it is not installed, it uses the bundled `imageio-ffmpeg` dependency from `requirements.txt`.
+
+For most Windows users, installing the plugin dependencies is enough:
+
+```bash
+cd /path/to/ComfyUI
+python -m pip install -r custom_nodes/666/ComfyUI-SpeechTextQC/requirements.txt
+```
+
+You can still install system `ffmpeg` manually if you prefer:
 
 ```bash
 ffmpeg -version
@@ -49,7 +58,13 @@ macOS:
 brew install ffmpeg
 ```
 
-Windows users can install ffmpeg with a package manager or from the official ffmpeg builds, then make sure `ffmpeg.exe` is available in `PATH`.
+Windows optional manual install:
+
+```powershell
+winget install --id Gyan.FFmpeg -e
+```
+
+Then restart ComfyUI.
 
 ## API Key
 
@@ -112,5 +127,6 @@ If your ComfyUI does not have a text preview node, use `QC Text Viewer/Saver` fr
 ## Notes
 
 - No local speech or translation model is bundled or downloaded.
+- The node uses system `ffmpeg` when available, otherwise it falls back to `imageio-ffmpeg` from Python dependencies. This is designed to work on Windows without manually editing `PATH`.
 - The node compresses extracted audio to mp3 before upload. If the extracted audio is still larger than 24MB, split the video and run QC per segment.
 - `whisper-1` returns segment timestamps. Newer transcription models may return text without segment timestamps depending on provider support.
