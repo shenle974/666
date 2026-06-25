@@ -9,6 +9,7 @@ The main node extracts audio from a video, sends the audio to an OpenAI or OpenA
 - `Uploaded Video Path`: select a video from the ComfyUI `input` directory.
 - `Reference Text Loader`: load reference text from `txt`, `srt`, `ass`, or `vtt` files in the ComfyUI `input` directory.
 - `Speech/Text Consistency QC API`: transcribe, translate, align, and generate the QC report.
+- `QC Text Viewer/Saver`: display `qc_report` or `qc_json` in ComfyUI and optionally save it as a txt file.
 
 ## Install With Git
 
@@ -79,7 +80,8 @@ Typical workflow:
 1. Put your video in ComfyUI `input`, then select it with `Uploaded Video Path`.
 2. Put your reference script in `reference_text`, connect it from an upstream text node, or load it with `Reference Text Loader`.
 3. Connect the video path and reference text to `Speech/Text Consistency QC API`.
-4. Run the workflow and read `qc_report` or pass `qc_json` to downstream nodes.
+4. Connect `qc_report` to `QC Text Viewer/Saver`.
+5. Run the workflow and read the report in `QC Text Viewer/Saver`, or open the saved txt file from ComfyUI `output`.
 
 Reference text is compared line by line. Each non-empty line is treated as one expected sentence.
 
@@ -104,6 +106,8 @@ Reference text is compared line by line. Each non-empty line is treated as one e
 - `transcript_zh`: simplified Chinese translation.
 - `qc_report`: readable Markdown-style QC report.
 - `qc_json`: structured JSON with segments, line-by-line scores, timestamps, and issue summaries.
+
+If your ComfyUI does not have a text preview node, use `QC Text Viewer/Saver` from this plugin.
 
 ## Notes
 

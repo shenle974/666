@@ -13,5 +13,10 @@
     "title": "Speech/Text Consistency QC API",
     "name": "SpeechTextConsistencyQC",
     "description": "Transcribe video speech through an API, translate it to Chinese, and compare it with line-based reference text."
+  },
+  {
+    "title": "QC Text Viewer/Saver",
+    "name": "QCTextViewerSaver",
+    "description": "Display qc_report or qc_json in the ComfyUI UI and optionally save it as a txt file."
   }
 ]

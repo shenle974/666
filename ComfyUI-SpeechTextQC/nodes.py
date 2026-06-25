@@ -7,6 +7,7 @@ import string
 import subprocess
 import tempfile
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 
 
@@ -54,6 +55,15 @@ def _input_dir():
     if folder_paths is not None:
         try:
             return Path(folder_paths.get_input_directory())
+        except Exception:
+            pass
+    return Path.cwd()
+
+
+def _output_dir():
+    if folder_paths is not None:
+        try:
+            return Path(folder_paths.get_output_directory())
         except Exception:
             pass
     return Path.cwd()
@@ -767,14 +777,66 @@ class ReferenceTextLoader:
         return (read_text_file(path).strip(),)
 
 
+class QCTextViewerSaver:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "text": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "placeholder": "连接 qc_report 或 qc_json",
+                    },
+                ),
+                "save_to_file": ("BOOLEAN", {"default": True}),
+                "filename_prefix": (
+                    "STRING",
+                    {
+                        "default": "speech_text_qc_report",
+                        "multiline": False,
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("saved_path", "text")
+    FUNCTION = "run"
+    CATEGORY = "video/audio_qc"
+    OUTPUT_NODE = True
+
+    def run(self, text, save_to_file, filename_prefix):
+        content = text or ""
+        saved_path = ""
+
+        if save_to_file:
+            safe_prefix = re.sub(r"[^A-Za-z0-9_.-]+", "_", filename_prefix or "speech_text_qc_report")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = _output_dir() / f"{safe_prefix}_{timestamp}.txt"
+            output_path.write_text(content, encoding="utf-8")
+            saved_path = str(output_path)
+
+        return {
+            "ui": {
+                "text": [content],
+                "saved_path": [saved_path],
+            },
+            "result": (saved_path, content),
+        }
+
+
 NODE_CLASS_MAPPINGS = {
     "UploadedVideoPath": UploadedVideoPath,
     "ReferenceTextLoader": ReferenceTextLoader,
     "SpeechTextConsistencyQC": SpeechTextConsistencyQC,
+    "QCTextViewerSaver": QCTextViewerSaver,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "UploadedVideoPath": "Uploaded Video Path",
     "ReferenceTextLoader": "Reference Text Loader",
     "SpeechTextConsistencyQC": "Speech/Text Consistency QC API",
+    "QCTextViewerSaver": "QC Text Viewer/Saver",
 }
